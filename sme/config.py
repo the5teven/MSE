@@ -1,29 +1,23 @@
-from dataclasses import dataclass
-from typing import Tuple
+"""
+Configuration file for the SME project.
+Holds various configuration parameters, including those for device, model components,
+training hyperparameters, parallel data loading, logging, etc.
+"""
+from dataclasses import dataclass, field
+from typing import Tuple, Type, Dict, Any
 import torch
 
-
 @dataclass
-class SMEConfig:
-    # Device configuration
+class DeviceConfig:
     device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Core Model Components (set these to your model classes before using)
-    encoder_class: type = None
-    emulator_class: type = None
+@dataclass
+class ModelComponents:
+    encoder_class: Type = None
+    emulator_class: Type = None
 
-    loss_type: str = 'symmetric'
-    input_dim: Tuple[int, int] = (100, 2)
-
-    use_active_learning: bool = False
-    candidate_pool_size: int = 500
-    training_steps_per_epoch: int = 100
-    pretraining_samples: int = 1000
-    pretraining_model: str = "VAR"
-    refinement_steps: int = 10
-    refinement_lr: float = 0.001
-
-    # Training Hyperparameters
+@dataclass
+class TrainingConfig:
     batch_size: int = 64
     num_epochs: int = 100
     learning_rate: float = 1e-4
@@ -32,41 +26,56 @@ class SMEConfig:
     param_dim: int = 128
     memory_bank_size: int = 1024
     lr_scheduler: str = 'cosine'
+    loss_type: str = 'symmetric'
+    input_dim: Tuple[int, int] = (100, 2)
+    refinement_steps: int = 10
+    refinement_lr: float = 0.001
+    training_steps_per_epoch: int = 100
+    pretraining_samples: int = 1000
+    pretraining_model: str = "VAR"
+    candidate_pool_size: int = 500
+    use_active_learning: bool = False
+    use_pretraining: bool = False
+    pretraining_epochs: int = 10
+    use_early_stopping: bool = False
+    early_stopping_patience: int = 5
+    nn_method: str = 'faiss'
+    faiss_index_type: str = 'FlatIP'
 
-    # Mixed Precision & Optimization
+@dataclass
+class OptimizationConfig:
     use_amp: bool = True
     use_ema: bool = False
     use_memory_bank: bool = False
     compute_fisher: bool = True
+    adversarial_training: bool = False  # Enable adversarial robustness if True
 
-    # Regularization
+@dataclass
+class RegularizationConfig:
     use_weight_norm: bool = False
     spectral_normalization: bool = False
     use_gradient_clip_norm: bool = False
     grad_clip_value: float = 1.0
+    moment_matching_weight: float = 0.0  # Regularization weight for moment matching
 
-    # Learning Strategies
+@dataclass
+class LearningStrategies:
     use_curriculum_learning: bool = False
     label_smoothing: float = 0.1
-    alpha: float = 0.5  # Used in AngularLoss
+    alpha: float = 0.5
 
-    # FAISS Nearest Neighbor Search
-    nn_method: str = 'faiss'
-    faiss_index_type: str = 'FlatIP'
+@dataclass
+class LoggingConfig:
+    verbose: bool = True
+    logging_level: str = "INFO"
 
-    # Breakpoint Estimation
-    use_breakpoint_estimation: bool = False
-
-    # Transfer Learning (Pretraining)
-    use_pretraining: bool = False
-    pretraining_epochs: int = 10
-
-    # Early Stopping
-    use_early_stopping: bool = False
-    early_stopping_patience: int = 5
-
-    # Refinement
-    use_refinement: bool = False
-
-    # Memory Bank Updates
-    use_memory_bank_updates: bool = False
+@dataclass
+class SMEConfig:
+    device_config: DeviceConfig = field(default_factory=DeviceConfig)
+    model_components: ModelComponents = field(default_factory=ModelComponents)
+    training_config: TrainingConfig = field(default_factory=TrainingConfig)
+    optimization_config: OptimizationConfig = field(default_factory=OptimizationConfig)
+    regularization_config: RegularizationConfig = field(default_factory=RegularizationConfig)
+    learning_strategies: LearningStrategies = field(default_factory=LearningStrategies)
+    logging_config: LoggingConfig = field(default_factory=LoggingConfig)
+    extra_params: Dict[str, Any] = field(default_factory=dict)
