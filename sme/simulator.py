@@ -1,8 +1,3 @@
-"""
-Simulator module for the SME project.
-Generates synthetic data using various simulation models (e.g., ARIMA, VAR, etc.).
-Efficient implementations and vectorization are used where possible.
-"""
 import torch
 from dataclasses import dataclass
 from typing import Dict, Callable, Optional, List, Union, Any
@@ -118,7 +113,7 @@ class GeneralSimulator:
 
     def _simulate_var(self) -> torch.Tensor:
         p = self.config.params.get("p", 1)
-        phi = self.config.params.get("phi", torch.eye(self.config.n_vars) * 0.5)
+        phi = self.config.params.get("phi", torch.eye(self.config.n_vars) * 0.5).to(self.device)
         if not isinstance(phi, torch.Tensor):
             phi = torch.tensor(phi, device=self.device)
         Y = torch.zeros((self.config.T + p, self.config.n_vars), device=self.device, dtype=torch.float32)
@@ -160,7 +155,7 @@ class GeneralSimulator:
 
     def _simulate_regime_switching(self) -> torch.Tensor:
         n_regimes = self.config.params.get("n_regimes", 2)
-        transition_matrix = torch.tensor(self.config.params.get("transition_matrix", 
+        transition_matrix = torch.tensor(self.config.params.get("transition_matrix",
                                                                    torch.ones((n_regimes, n_regimes)) / n_regimes),
                                            device=self.device)
         regime_params = self.config.params.get("regime_params", [{"mu": 0.0, "sigma": 1.0} for _ in range(n_regimes)])

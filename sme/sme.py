@@ -1,13 +1,44 @@
-from typing import Any, Dict, Type, Callable
+from typing import Any, Dict, Type, Callable, List
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
 from .config import SMEConfig
 from .models import SMEModel
-from .simulator import GeneralSimulator, SimulatorConfig
+from .simulator import GeneralSimulator, SimulatorConfig, register_custom_simulator
 from .stats import generate_stats_table
 import pandas as pd
 import json
+
+
+class StructuralModel:
+    def __init__(self):
+        self.sim_config = None
+
+    def configure_simulation(self, model_type: str, params: Dict[str, Any], T: int, n_vars: int, **kwargs):
+        self.sim_config = SimulatorConfig(
+            model_type=model_type,
+            params=params,
+            T=T,
+            n_vars=n_vars,
+            **kwargs
+        )
+
+    def run_simulation(self):
+        if self.sim_config is None:
+            raise ValueError("Simulation configuration is not set.")
+        simulator = GeneralSimulator(self.sim_config)
+        return simulator.simulate()
+
+    def set_custom_noise_function(self, noise_func: Callable):
+        if self.sim_config is not None:
+            self.sim_config.noise_dist = noise_func
+
+    def register_custom_model(self, model_name: str, model_func: Callable):
+        register_custom_simulator(model_name)(model_func)
+
+    def add_break_points(self, break_points: List[int]):
+        if self.sim_config is not None:
+            self.sim_config.break_points = break_points
 
 
 class SME:
@@ -19,6 +50,7 @@ class SME:
         self.training_loss_history = []  # Advanced: capture training loss history
         self.internal_logs = []  # Advanced: capture internal logs for low-level inspection
         self.custom_simulation_function = None  # Allow custom simulation strategies
+        self.structural_model = StructuralModel()  # Initialize StructuralModel instance
 
     def configure_device(self, device: torch.device):
         self.config.device_config.device = device
@@ -58,6 +90,10 @@ class SME:
         """Allow users to set a custom simulation function."""
         self.custom_simulation_function = func
 
+    def configure_structural_model(self, model_type: str, params: Dict[str, Any], T: int, n_vars: int, **kwargs):
+        """Configure the StructuralModel for simulations."""
+        self.structural_model.configure_simulation(model_type, params, T, n_vars, **kwargs)
+
     def train_model(self):
         """
         Trains the model using an active-learning simulation selection strategy.
@@ -73,16 +109,20 @@ class SME:
         if self.custom_simulation_function:
             simulated_series = self.custom_simulation_function(model_type, params, T, n_vars, sigma)
         else:
-            sim_config = SimulatorConfig(
-                model_type=model_type,
-                params=params,
-                T=T,
-                n_vars=n_vars,
-                device=self.config.device_config.device,
-                sigma=sigma
-            )
-            simulator = GeneralSimulator(sim_config)
-            simulated_series = simulator.simulate()
+            if self.structural_model:
+                self.structural_model.configure_simulation(model_type, params, T, n_vars)
+                simulated_series = self.structural_model.run_simulation()
+            else:
+                sim_config = SimulatorConfig(
+                    model_type=model_type,
+                    params=params,
+                    T=T,
+                    n_vars=n_vars,
+                    device=self.config.device_config.device,
+                    noise_kwargs={"std": sigma}  # Pass sigma as part of noise_kwargs
+                )
+                simulator = GeneralSimulator(sim_config)
+                simulated_series = simulator.simulate()
         self.last_observed_series = simulated_series
         self.internal_logs.append("Simulated observed series with T={} and n_vars={}".format(T, n_vars))
         return simulated_series
@@ -183,8 +223,7 @@ class SME:
             if line.strip():
                 parts = line.split(':')
                 if len(parts) == 2:
-                    key = parts[0].strip()
-                    value = parts[1].strip()
+                    key, value = parts[0].strip(), parts[1].strip()
                     stats_dict[key] = value
         with open(file_name, 'w') as f:
             json.dump(stats_dict, f, indent=4)
@@ -196,8 +235,7 @@ class SME:
             if line.strip():
                 parts = line.split(':')
                 if len(parts) == 2:
-                    key = parts[0].strip()
-                    value = parts[1].strip()
+                    key, value = parts[0].strip(), parts[1].strip()
                     data.append((key, value))
         df = pd.DataFrame(data, columns=['Parameter', 'Value'])
         return df

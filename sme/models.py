@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import faiss
 from tqdm import tqdm
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler  # Updated import for deprecation warnings
 from abc import ABC, abstractmethod
 import logging
 from .config import SMEConfig
@@ -178,7 +178,7 @@ class SMEModel:
                 phi_batch, Y_batch = self._generate_training_batch(pretraining_mode=pretraining_mode)
                 phi_batch, Y_batch = phi_batch.to(self.device), Y_batch.to(self.device)
                 optimizer.zero_grad()
-                with autocast(enabled=self.config.optimization_config.use_amp):
+                with autocast(device_type='cuda', dtype=torch.float16):  # Updated usage for deprecation warning
                     f_output = self.encoder(Y_batch)
                     g_output = self.emulator(phi_batch)
                     loss = self.loss_fn(f=f_output, g=g_output)
@@ -267,4 +267,4 @@ class SMEModel:
     def _create_scheduler(self, optimizer):
         if self.config.training_config.lr_scheduler == 'cosine':
             return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.config.training_config.num_epochs)
-        return None
+        return NoneZ
