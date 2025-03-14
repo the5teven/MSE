@@ -1,168 +1,102 @@
+"""
+An advanced simulator for SME.
+
+This module generates synthetic data for training and testing.
+It supports multiple simulation models by selecting a simulation type
+and providing the corresponding parameters.
+
+Usage:
+    config = {
+        "model_type": "VAR",  # or "nonlinear", "regime_switch", etc.
+        "T": 100,             # time series length
+        "n_vars": 2,          # number of variables
+        "params": {           # parameters for the simulation model
+            "phi": [[0.5, 0.1], [0.2, 0.3]]
+        }
+    }
+    simulator = GeneralSimulator(config)
+    simulated_data = simulator.simulate()
+"""
 import torch
-from dataclasses import dataclass
-from typing import Dict, Callable, Optional, List, Union, Any
-
-# Registry for custom simulation functions.
-CUSTOM_SIMULATORS: Dict[str, Callable] = {}
-
-def register_custom_simulator(name: str):
-    """Decorator to register a custom simulator function."""
-    def decorator(func: Callable):
-        CUSTOM_SIMULATORS[name.lower()] = func
-        return func
-    return decorator
-
-@dataclass
-class SimulatorConfig:
-    model_type: Union[str, List[str]]
-    params: Union[Dict[str, Any], List[Dict[str, Any]]]
-    T: int
-    n_vars: int = 1
-    noise_dist: Callable = staticmethod(torch.randn)
-    noise_kwargs: Optional[Dict[str, Any]] = None
-    exogenous_vars: Optional[torch.Tensor] = None
-    time_varying_params: Optional[Dict[str, torch.Tensor]] = None
-    break_points: Optional[List[int]] = None
-    seed: Optional[int] = None
-    use_gpu: bool = True
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import numpy as np
 
 class GeneralSimulator:
-    def __init__(self, config: SimulatorConfig):
+    def __init__(self, config):
+        """
+        Args:
+            config (dict): A dictionary with simulation configuration.
+              Expected keys:
+                  - "model_type": A string identifier for the simulation model.
+                  - "T": (int) length of the time series.
+                  - "n_vars": (int) number of variables.
+                  - "params": (dict) parameters needed for the chosen model.
+                  - Additional keys can be defined based on model_type.
+        """
         self.config = config
-        self.device = self.config.device
-        if self.config.seed is not None:
-            torch.manual_seed(self.config.seed)
-        self.noise_kwargs = self.config.noise_kwargs or {"mean": 0, "std": 1}
-        self.simulation_methods = {
-            "arima": self._simulate_arima,
-            "garch": self._simulate_garch,
-            "var": self._simulate_var,
-            "statespace": self._simulate_state_space,
-            "stochasticvolatility": self._simulate_stochastic_volatility,
-            "regimeswitching": self._simulate_regime_switching,
-        }
+        self.model_type = config.get("model_type", "default")
+        self.T = config.get("T", 100)
+        self.n_vars = config.get("n_vars", 2)
+        self.params = config.get("params", {})
 
-    def _simulate_single_model(self) -> torch.Tensor:
-        model_type = (self.config.model_type[0].lower() if isinstance(self.config.model_type, list)
-                      else self.config.model_type.lower())
-        if model_type in CUSTOM_SIMULATORS:
-            return CUSTOM_SIMULATORS[model_type](self.config).to(self.device)
-        if model_type in self.simulation_methods:
-            return self.simulation_methods[model_type]()
-        raise ValueError(f"Unsupported model type: {self.config.model_type}")
-
-    def simulate(self) -> torch.Tensor:
-        if self.config.break_points:
-            return self._simulate_with_breaks()
+    def simulate(self):
+        """
+        Dispatches simulation to the appropriate model based on `model_type`.
+        """
+        if self.model_type.lower() == "var":
+            return self.simulate_var()
+        elif self.model_type.lower() == "nonlinear":
+            return self.simulate_nonlinear()
+        elif self.model_type.lower() == "regime_switch":
+            return self.simulate_regime_switch()
         else:
-            return self._simulate_single_model()
+            # Default simulation: generate random noise
+            return torch.rand(self.T, self.n_vars)
 
-    def _simulate_with_breaks(self) -> torch.Tensor:
-        break_points = sorted(self.config.break_points)
-        if break_points[0] != 0:
-            break_points.insert(0, 0)
-        if break_points[-1] != self.config.T:
-            break_points.append(self.config.T)
-        Y = torch.zeros((self.config.T, self.config.n_vars), device=self.device)
-        for start, end in zip(break_points[:-1], break_points[1:]):
-            segment_config = SimulatorConfig(
-                model_type=self.config.model_type,
-                params=self.config.params,
-                T=end - start,
-                n_vars=self.config.n_vars,
-                noise_dist=self.config.noise_dist,
-                noise_kwargs=self.config.noise_kwargs,
-                exogenous_vars=self.config.exogenous_vars,
-                time_varying_params=self.config.time_varying_params,
-                break_points=None,
-                seed=self.config.seed,
-                use_gpu=self.config.use_gpu,
-                device=self.device
-            )
-            segment_simulator = GeneralSimulator(segment_config)
-            Y[start:end] = segment_simulator.simulate()
-        return Y
+    def simulate_var(self):
+        """
+        Simulate a Vector Autoregression (VAR) process.
+        Requires "phi" parameter in config.params.
+        """
+        phi = self.params.get("phi")
+        if phi is None:
+            raise ValueError("VAR simulation requires 'phi' in params.")
+        phi = np.array(phi)
+        T, n_vars = self.T, self.n_vars
+        data = np.zeros((T, n_vars))
+        data[0] = np.random.randn(n_vars)
+        for t in range(1, T):
+            data[t] = phi.dot(data[t-1]) + np.random.randn(n_vars) * 0.1
+        return torch.tensor(data, dtype=torch.float32)
 
-    def _simulate_arima(self) -> torch.Tensor:
-        p, d, q = (self.config.params.get(k, 1) for k in ["p", "d", "q"])
-        ar_params = torch.tensor(self.config.params.get("ar_params", [0.5] * p), device=self.device)
-        ma_params = torch.tensor(self.config.params.get("ma_params", [0.5] * q), device=self.device)
-        noise = torch.randn(self.config.T + d + q, device=self.device, **self.noise_kwargs)
-        series = torch.zeros(self.config.T + d + q, device=self.device)
-        for t in range(max(p, q), self.config.T + d + q):
-            ar_term = torch.dot(ar_params, series[t-p:t].flip(0))
-            ma_term = torch.dot(ma_params, noise[t-q:t].flip(0))
-            series[t] = ar_term + ma_term + noise[t]
-        if d > 0:
-            for _ in range(d):
-                series = torch.diff(series)
-        return series[-self.config.T:].reshape(-1, self.config.n_vars)
+    def simulate_nonlinear(self):
+        """
+        Simulate a nonlinear time series process.
+        User should provide necessary parameters such as nonlinearity scale.
+        """
+        T, n_vars = self.T, self.n_vars
+        scale = self.params.get("scale", 1.0)
+        time = np.linspace(0, 2 * np.pi, T)
+        data = np.zeros((T, n_vars))
+        data[:, 0] = scale * np.sin(time)
+        if n_vars > 1:
+            for i in range(1, n_vars):
+                data[:, i] = np.random.randn(T) * 0.5
+        return torch.tensor(data, dtype=torch.float32)
 
-    def _simulate_garch(self) -> torch.Tensor:
-        p = self.config.params.get("p", 1)
-        q = self.config.params.get("q", 1)
-        alpha = torch.tensor(self.config.params.get("alpha", [0.1] * p), device=self.device)
-        beta = torch.tensor(self.config.params.get("beta", [0.8] * q), device=self.device)
-        volatility = torch.zeros(self.config.T + max(p, q), device=self.device)
-        returns = torch.zeros(self.config.T + max(p, q), device=self.device)
-        for t in range(max(p, q), volatility.shape[0]):
-            volatility[t] = (alpha @ (volatility[t-p:t].flip(0)**2)) + (beta @ (returns[t-q:t].flip(0)**2))
-            returns[t] = torch.randn(1, device=self.device) * torch.sqrt(volatility[t])
-        return returns[-self.config.T:].reshape(-1, self.config.n_vars)
-
-    def _simulate_var(self) -> torch.Tensor:
-        p = self.config.params.get("p", 1)
-        phi = self.config.params.get("phi", torch.eye(self.config.n_vars) * 0.5).to(self.device)
-        if not isinstance(phi, torch.Tensor):
-            phi = torch.tensor(phi, device=self.device)
-        Y = torch.zeros((self.config.T + p, self.config.n_vars), device=self.device, dtype=torch.float32)
-        mean = float(self.noise_kwargs.get("mean", 0.0))
-        std = float(self.noise_kwargs.get("std", 1.0))
-        for t in range(p, self.config.T + p):
-            for lag in range(1, p + 1):
-                Y[t] += phi @ Y[t - lag]
-            Y[t] += torch.normal(
-                mean=torch.full((self.config.n_vars,), mean, dtype=torch.float32, device=self.device),
-                std=torch.full((self.config.n_vars,), std, dtype=torch.float32, device=self.device)
-            )
-        return Y[-self.config.T:]
-
-    def _simulate_state_space(self) -> torch.Tensor:
-        A = torch.tensor(self.config.params.get("A", torch.eye(self.config.n_vars)), device=self.device)
-        C = torch.tensor(self.config.params.get("C", torch.eye(self.config.n_vars)), device=self.device)
-        Q = torch.tensor(self.config.params.get("Q", torch.eye(self.config.n_vars)), device=self.device)
-        R = torch.tensor(self.config.params.get("R", torch.eye(self.config.n_vars)), device=self.device)
-        states = torch.zeros((self.config.T, self.config.n_vars), device=self.device)
-        observations = torch.zeros((self.config.T, self.config.n_vars), device=self.device)
-        for t in range(1, self.config.T):
-            process_noise = torch.randn(self.config.n_vars, device=self.device) @ Q
-            observation_noise = torch.randn(self.config.n_vars, device=self.device) @ R
-            states[t] = A @ states[t - 1] + process_noise
-            observations[t] = C @ states[t] + observation_noise
-        return observations
-
-    def _simulate_stochastic_volatility(self) -> torch.Tensor:
-        mu = self.config.params.get("mu", 0.0)
-        phi = self.config.params.get("phi", 0.9)
-        sigma = self.config.params.get("sigma", 0.1)
-        log_volatility = torch.zeros(self.config.T, device=self.device)
-        returns = torch.zeros(self.config.T, device=self.device)
-        for t in range(1, self.config.T):
-            log_volatility[t] = mu + phi * (log_volatility[t - 1] - mu) + torch.randn(1, device=self.device) * sigma
-            returns[t] = torch.randn(1, device=self.device) * torch.exp(log_volatility[t] / 2)
-        return returns.reshape(-1, self.config.n_vars)
-
-    def _simulate_regime_switching(self) -> torch.Tensor:
-        n_regimes = self.config.params.get("n_regimes", 2)
-        transition_matrix = torch.tensor(self.config.params.get("transition_matrix",
-                                                               torch.ones((n_regimes, n_regimes)) / n_regimes),
-                                         device=self.device)
-        regime_params = self.config.params.get("regime_params", [{"mu": 0.0, "sigma": 1.0} for _ in range(n_regimes)])
-        regimes = torch.zeros(self.config.T, dtype=torch.long, device=self.device)
-        returns = torch.zeros(self.config.T, device=self.device)
-        for t in range(1, self.config.T):
-            regimes[t] = torch.multinomial(transition_matrix[regimes[t - 1]], 1).item()
-            params = regime_params[regimes[t]]
-            returns[t] = torch.randn(1, device=self.device) * params["sigma"] + params["mu"]
-        return returns.reshape(-1, self.config.n_vars)
+    def simulate_regime_switch(self):
+        """
+        Simulate a regime switching process.
+        Requires additional parameters like break points and regime-specific parameters.
+        """
+        T, n_vars = self.T, self.n_vars
+        break_point = self.params.get("break_point", T // 2)
+        phi_regime1 = np.array(self.params.get("phi_regime1", np.eye(n_vars) * 0.5))
+        phi_regime2 = np.array(self.params.get("phi_regime2", np.eye(n_vars) * -0.5))
+        data = np.zeros((T, n_vars))
+        data[0] = np.random.randn(n_vars)
+        for t in range(1, T):
+            if t < break_point:
+                data[t] = phi_regime1.dot(data[t-1]) + np.random.randn(n_vars) * 0.1
+            else:
+                data[t] = phi_regime2.dot(data[t-1]) + np.random.randn(n_vars) * 0.1
+        return torch.tensor(data, dtype=torch.float32)

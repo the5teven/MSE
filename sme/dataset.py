@@ -1,41 +1,18 @@
 """
-Dataset module for the SME project.
-Defines SimulationDataset for managing simulation data and provides a helper function
-to create parallel DataLoaders for improved training throughput.
+A simplified dataset module for SME.
+Generates simulation data on the fly using the GeneralSimulator.
 """
 import torch
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-
+from torch.utils.data import Dataset
 
 class SimulationDataset(Dataset):
-    def __init__(self, phi_data: np.ndarray, Y_data: np.ndarray):
-        """
-        Args:
-            phi_data: NumPy array of parameter samples.
-            Y_data: NumPy array of corresponding simulated data.
-        """
-        self.phi_data = torch.tensor(phi_data, dtype=torch.float32)
-        self.Y_data = torch.tensor(Y_data, dtype=torch.float32)
+    def __init__(self, num_samples, simulator):
+        self.num_samples = num_samples
+        self.simulator = simulator
 
     def __len__(self):
-        return self.Y_data.shape[0]
+        return self.num_samples
 
     def __getitem__(self, idx):
-        return self.phi_data[idx], self.Y_data[idx]
-
-
-def create_dataloader(dataset: Dataset, batch_size: int, shuffle: bool = True, num_workers: int = 4):
-    """
-    Create a DataLoader with parallel workers to improve data loading performance.
-
-    Args:
-        dataset: A PyTorch Dataset.
-        batch_size: Batch size for loading.
-        shuffle: Whether to shuffle the data.
-        num_workers: Number of subprocesses to use for data loading.
-
-    Returns:
-        A DataLoader instance.
-    """
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+        # Generate one sample using the simulator.
+        return self.simulator.simulate()
