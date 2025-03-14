@@ -10,12 +10,8 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/sme",
     packages=find_packages(),
-    install_requires=[
-        'numpy',
-        'torch>=1.5.0',
-        'faiss-cpu',
-        'tqdm',
-    ],
+
+
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

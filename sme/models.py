@@ -1,7 +1,3 @@
-"""
-Defines the SMEModel (with encoder and emulator) including improvements for parallel computation,
-enhanced logging, mixed-precision training, and efficiency.
-"""
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,10 +12,10 @@ from .optim import EMA
 
 class BaseEncoder(nn.Module, ABC):
     """Abstract base class for encoder models."""
-    def __init__(self, config: SMEConfig):
+    def __init__(self, n_vars, embedding_dim):
         super().__init__()
-        self.config = config
-        self.device = self.config.device_config.device
+        self.n_vars = n_vars
+        self.embedding_dim = embedding_dim
 
     @abstractmethod
     def forward(self, Y: torch.Tensor) -> torch.Tensor:
@@ -28,10 +24,10 @@ class BaseEncoder(nn.Module, ABC):
 
 class BaseEmulator(nn.Module, ABC):
     """Abstract base class for emulator models."""
-    def __init__(self, config: SMEConfig):
+    def __init__(self, n_params, embedding_dim):
         super().__init__()
-        self.config = config
-        self.device = self.config.device_config.device
+        self.n_params = n_params
+        self.embedding_dim = embedding_dim
 
     @abstractmethod
     def forward(self, phi: torch.Tensor) -> torch.Tensor:
@@ -56,8 +52,16 @@ class SMEModel:
 
     def _init_models(self):
         """Instantiate encoder and emulator models."""
-        self.encoder = self.config.model_components.encoder_class(self.config).to(self.device)
-        self.emulator = self.config.model_components.emulator_class(self.config).to(self.device)
+        self.encoder = self.config.model_components.encoder_class(
+            self.config.training_config.input_dim[1],
+            self.config.training_config.embedding_dim
+        ).to(self.device)
+
+        self.emulator = self.config.model_components.emulator_class(
+            self.config.training_config.param_dim,
+            self.config.training_config.embedding_dim
+        ).to(self.device)
+
         self.logger.info("Models (encoder/emulator) initialized.")
 
     def _init_optimizations(self):

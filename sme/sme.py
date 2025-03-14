@@ -4,7 +4,6 @@ from .config import SMEConfig
 from .models import SMEModel
 from .simulator import GeneralSimulator, SimulatorConfig
 from .stats import generate_stats_table
-
 class SME:
     def __init__(self):
         self.config = SMEConfig()

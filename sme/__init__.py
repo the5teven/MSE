@@ -7,7 +7,7 @@ and optimization tools.
 
 Modules:
 - config: Configuration and hyperparameters for the package.
-- dataset: Data loading and simulation dataset management.
+- dataset.py: Data loading and simulation dataset.py management.
 - simulator: Tools for synthetic data simulation.
 - models: Definitions of the core models (encoder, emulator) and training loops.
 - losses: Loss functions used during training.

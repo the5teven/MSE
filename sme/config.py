@@ -24,6 +24,7 @@ class TrainingConfig:
     weight_decay: float = 1e-4
     tau: float = 0.07
     param_dim: int = 128
+    embedding_dim: int = 64  # Added embedding_dim attribute
     memory_bank_size: int = 1024
     lr_scheduler: str = 'cosine'
     loss_type: str = 'symmetric'
