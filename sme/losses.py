@@ -5,12 +5,10 @@ from .config import SMEConfig
 
 class CompositeLoss(nn.Module):
     def __init__(self, config: SMEConfig):
-        """
-        Composite loss function that selects the appropriate loss function based on the configuration.
-        """
+        """Composite loss that selects the appropriate loss based on configuration."""
         super().__init__()
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = self.config.device
 
         loss_functions = {
             "symmetric": SymmetricInfoNCE,
@@ -24,22 +22,17 @@ class CompositeLoss(nn.Module):
         self.loss_fn = loss_functions[config.loss_type](config).to(self.device)
 
     def forward(self, f, g):
-        """
-        Compute the loss in mixed precision (AMP) mode for better performance.
-        """
+        """Compute loss using mixed precision if enabled."""
         with torch.cuda.amp.autocast(enabled=self.config.use_amp):
             return self.loss_fn(f, g)
 
-# ✅ Optimized Symmetric InfoNCE Loss
 class SymmetricInfoNCE(nn.Module):
     def __init__(self, config: SMEConfig):
         super().__init__()
         self.temperature = config.tau
 
     def forward(self, f, g):
-        """
-        Compute the Symmetric InfoNCE loss.
-        """
+        """Compute Symmetric InfoNCE loss."""
         f, g = F.normalize(f, dim=-1), F.normalize(g, dim=-1)
         logits = torch.matmul(f, g.T) / self.temperature
         labels = torch.arange(logits.shape[0], device=logits.device)
@@ -48,6 +41,7 @@ class SymmetricInfoNCE(nn.Module):
         loss_g = F.cross_entropy(logits.T, labels)
         return 0.5 * (loss_f + loss_g)
 
+# Updated AngularLoss using a mean squared error on cosine similarity
 class AngularLoss(nn.Module):
     def __init__(self, config: SMEConfig):
         super().__init__()
@@ -55,25 +49,18 @@ class AngularLoss(nn.Module):
         self.temperature = config.tau
 
     def forward(self, f, g):
-        """
-        Compute the Angular loss, which encourages angular similarity.
-        """
+        """Compute Angular loss to encourage maximum cosine similarity."""
         cos_sim = F.cosine_similarity(f, g, dim=-1)
-        angular_distance = 1 - cos_sim
-
-        loss = F.cross_entropy(angular_distance / self.temperature, torch.zeros_like(angular_distance))
+        loss = F.mse_loss(cos_sim, torch.ones_like(cos_sim))
         return self.alpha * loss
 
-# ProtoNCE Loss (Prototype Contrastive Learning)
 class ProtoNCE(nn.Module):
     def __init__(self, config: SMEConfig):
         super().__init__()
         self.temperature = config.tau
 
     def forward(self, f, g):
-        """
-        Prototype-NCE loss.
-        """
+        """Compute prototype-based contrastive loss."""
         prototypes = torch.mean(g, dim=0, keepdim=True)
         f, prototypes = F.normalize(f, dim=-1), F.normalize(prototypes, dim=-1)
 
@@ -94,28 +81,17 @@ class MemoryBankLoss(nn.Module):
 
     def forward(self, f, g):
         """
-        Computes contrastive loss using memory bank.
-        Args:
-            f: Encoded features from current batch.
-            g: Encoded parameters from emulator.
-        Returns:
-            Contrastive loss with memory bank negatives.
+        Compute contrastive loss using both positive pairs and negatives from the memory bank.
         """
         f, g = F.normalize(f, dim=-1), F.normalize(g, dim=-1)
-
-        # Compute similarity scores
-        pos_logits = torch.sum(f * g, dim=-1) / self.temperature  # Positive pairs
-        neg_logits = torch.matmul(f, self.memory_bank.T) / self.temperature  # Negative samples
-
-        # Create labels (positives at index 0)
+        pos_logits = torch.sum(f * g, dim=-1) / self.temperature
+        neg_logits = torch.matmul(f, self.memory_bank.T) / self.temperature
         logits = torch.cat([pos_logits.unsqueeze(1), neg_logits], dim=1)
         labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
 
-        # Update memory bank
         self._update_memory_bank(g)
-
         return F.cross_entropy(logits, labels)
 
     def _update_memory_bank(self, g):
-        """Updates memory bank with new embeddings."""
+        """Update memory bank with new embeddings."""
         self.memory_bank = torch.cat([g.detach(), self.memory_bank[:-g.shape[0]]], dim=0)

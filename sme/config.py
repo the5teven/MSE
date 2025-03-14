@@ -1,10 +1,17 @@
 from dataclasses import dataclass
 from typing import Tuple
+import torch
+
+
 @dataclass
 class SMEConfig:
-    # Core Model Components
-    encoder_class: type
-    emulator_class: type
+    # Device configuration
+    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Core Model Components (set these to your model classes before using)
+    encoder_class: type = None
+    emulator_class: type = None
+
     loss_type: str = 'symmetric'
     input_dim: Tuple[int, int] = (100, 2)
 
