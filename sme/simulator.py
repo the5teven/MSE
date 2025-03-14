@@ -41,7 +41,6 @@ class GeneralSimulator:
         self.device = self.config.device
         if self.config.seed is not None:
             torch.manual_seed(self.config.seed)
-        # Ensure noise_kwargs contain standard keys
         self.noise_kwargs = self.config.noise_kwargs or {"mean": 0, "std": 1}
         self.simulation_methods = {
             "arima": self._simulate_arima,
@@ -54,7 +53,6 @@ class GeneralSimulator:
 
     def _simulate_single_model(self) -> torch.Tensor:
         """Simulate a single model based on the model_type."""
-        # If a list is provided, choose the first type
         if isinstance(self.config.model_type, list):
             model_type = self.config.model_type[0].lower()
         else:
@@ -104,10 +102,12 @@ class GeneralSimulator:
     def _simulate_arima(self) -> torch.Tensor:
         """Simulate an ARIMA process."""
         p, d, q = (self.config.params.get(k, 1) for k in ["p", "d", "q"])
-        ar_params = torch.tensor(self.config.params.get("ar_params", [0.5] * p), device=self.device)
-        ma_params = torch.tensor(self.config.params.get("ma_params", [0.5] * q), device=self.device)
+        ar_params = torch.tensor(self.config.params.get("ar_params", [0.5] * p), device=self.device,
+                                 dtype=torch.float32)
+        ma_params = torch.tensor(self.config.params.get("ma_params", [0.5] * q), device=self.device,
+                                 dtype=torch.float32)
         noise = torch.randn(self.config.T + d + q, device=self.device, **self.noise_kwargs)
-        series = torch.zeros(self.config.T + d + q, device=self.device)
+        series = torch.zeros(self.config.T + d + q, device=self.device, dtype=torch.float32)
         for t in range(max(p, q), self.config.T + d + q):
             ar_term = torch.dot(ar_params, series[t - p:t].flip(0))
             ma_term = torch.dot(ma_params, noise[t - q:t].flip(0))
@@ -121,10 +121,10 @@ class GeneralSimulator:
         """Simulate a GARCH process."""
         p = self.config.params.get("p", 1)
         q = self.config.params.get("q", 1)
-        alpha = torch.tensor(self.config.params.get("alpha", [0.1] * p), device=self.device)
-        beta = torch.tensor(self.config.params.get("beta", [0.8] * q), device=self.device)
-        volatility = torch.zeros(self.config.T + max(p, q), device=self.device)
-        returns = torch.zeros(self.config.T + max(p, q), device=self.device)
+        alpha = torch.tensor(self.config.params.get("alpha", [0.1] * p), device=self.device, dtype=torch.float32)
+        beta = torch.tensor(self.config.params.get("beta", [0.8] * q), device=self.device, dtype=torch.float32)
+        volatility = torch.zeros(self.config.T + max(p, q), device=self.device, dtype=torch.float32)
+        returns = torch.zeros(self.config.T + max(p, q), device=self.device, dtype=torch.float32)
         for t in range(max(p, q), volatility.shape[0]):
             volatility[t] = (alpha @ (volatility[t - p:t].flip(0) ** 2)) + (beta @ (returns[t - q:t].flip(0) ** 2))
             returns[t] = torch.randn(1, device=self.device) * torch.sqrt(volatility[t])
@@ -133,9 +133,12 @@ class GeneralSimulator:
     def _simulate_var(self) -> torch.Tensor:
         """Simulate a Vector AutoRegression (VAR) process."""
         p = self.config.params.get("p", 1)
+        # Ensure phi is a float32 tensor
         phi = self.config.params.get("phi", torch.eye(self.config.n_vars) * 0.5)
         if not isinstance(phi, torch.Tensor):
-            phi = torch.tensor(phi, device=self.device)
+            phi = torch.tensor(phi, device=self.device, dtype=torch.float32)
+        else:
+            phi = phi.to(device=self.device, dtype=torch.float32)
         Y = torch.zeros((self.config.T + p, self.config.n_vars), device=self.device, dtype=torch.float32)
         mean = float(self.noise_kwargs.get("mean", 0.0))
         std = float(self.noise_kwargs.get("std", 1.0))
@@ -150,12 +153,16 @@ class GeneralSimulator:
 
     def _simulate_state_space(self) -> torch.Tensor:
         """Simulate a state-space model."""
-        A = torch.tensor(self.config.params.get("A", torch.eye(self.config.n_vars)), device=self.device)
-        C = torch.tensor(self.config.params.get("C", torch.eye(self.config.n_vars)), device=self.device)
-        Q = torch.tensor(self.config.params.get("Q", torch.eye(self.config.n_vars)), device=self.device)
-        R = torch.tensor(self.config.params.get("R", torch.eye(self.config.n_vars)), device=self.device)
-        states = torch.zeros((self.config.T, self.config.n_vars), device=self.device)
-        observations = torch.zeros((self.config.T, self.config.n_vars), device=self.device)
+        A = torch.tensor(self.config.params.get("A", torch.eye(self.config.n_vars)), device=self.device,
+                         dtype=torch.float32)
+        C = torch.tensor(self.config.params.get("C", torch.eye(self.config.n_vars)), device=self.device,
+                         dtype=torch.float32)
+        Q = torch.tensor(self.config.params.get("Q", torch.eye(self.config.n_vars)), device=self.device,
+                         dtype=torch.float32)
+        R = torch.tensor(self.config.params.get("R", torch.eye(self.config.n_vars)), device=self.device,
+                         dtype=torch.float32)
+        states = torch.zeros((self.config.T, self.config.n_vars), device=self.device, dtype=torch.float32)
+        observations = torch.zeros((self.config.T, self.config.n_vars), device=self.device, dtype=torch.float32)
         for t in range(1, self.config.T):
             process_noise = torch.randn(self.config.n_vars, device=self.device) @ Q
             observation_noise = torch.randn(self.config.n_vars, device=self.device) @ R
@@ -166,12 +173,13 @@ class GeneralSimulator:
     def _simulate_stochastic_volatility(self) -> torch.Tensor:
         """Simulate a stochastic volatility model."""
         mu = self.config.params.get("mu", 0.0)
-        phi = self.config.params.get("phi", 0.9)
+        phi_value = self.config.params.get("phi", 0.9)
         sigma = self.config.params.get("sigma", 0.1)
-        log_volatility = torch.zeros(self.config.T, device=self.device)
-        returns = torch.zeros(self.config.T, device=self.device)
+        log_volatility = torch.zeros(self.config.T, device=self.device, dtype=torch.float32)
+        returns = torch.zeros(self.config.T, device=self.device, dtype=torch.float32)
         for t in range(1, self.config.T):
-            log_volatility[t] = mu + phi * (log_volatility[t - 1] - mu) + torch.randn(1, device=self.device) * sigma
+            log_volatility[t] = mu + phi_value * (log_volatility[t - 1] - mu) + torch.randn(1,
+                                                                                            device=self.device) * sigma
             returns[t] = torch.randn(1, device=self.device) * torch.exp(log_volatility[t] / 2)
         return returns.reshape(-1, self.config.n_vars)
 
@@ -180,10 +188,10 @@ class GeneralSimulator:
         n_regimes = self.config.params.get("n_regimes", 2)
         transition_matrix = torch.tensor(
             self.config.params.get("transition_matrix", torch.ones((n_regimes, n_regimes)) / n_regimes),
-            device=self.device)
+            device=self.device, dtype=torch.float32)
         regime_params = self.config.params.get("regime_params", [{"mu": 0.0, "sigma": 1.0} for _ in range(n_regimes)])
         regimes = torch.zeros(self.config.T, dtype=torch.long, device=self.device)
-        returns = torch.zeros(self.config.T, device=self.device)
+        returns = torch.zeros(self.config.T, device=self.device, dtype=torch.float32)
         for t in range(1, self.config.T):
             regimes[t] = torch.multinomial(transition_matrix[regimes[t - 1]], 1).item()
             params = regime_params[regimes[t]]

@@ -48,6 +48,7 @@ class SMEModel:
     def _init_optimizations(self):
         """Initialize optimization components."""
         self.scaler = GradScaler(enabled=self.config.use_amp and torch.cuda.is_available())
+        # Now, EMA is applied on the combined parameters of encoder and emulator.
         self.ema = EMA(self) if self.config.use_ema else None
 
         self.memory_bank = None
@@ -60,6 +61,11 @@ class SMEModel:
             self.index = faiss.IndexFlatL2(self.config.param_dim)
         else:
             self.index = None
+
+    def named_parameters(self):
+        """Yield parameters from encoder and emulator so EMA can access them."""
+        yield from self.encoder.named_parameters()
+        yield from self.emulator.named_parameters()
 
     def estimate_phi(self, Y_star: np.ndarray, phi_pool: np.ndarray):
         """Estimate parameters for a given Y_star using FAISS and refinement."""
@@ -111,8 +117,8 @@ class SMEModel:
         best_loss = float("inf")
         patience_counter = 0
 
-        for epoch in tqdm(range(num_epochs),
-                          desc="Training SME Model" if not pretraining_mode else "Pretraining SME Model"):
+        for epoch in range(num_epochs):
+            print(f"Epoch: {epoch+1}/{num_epochs}")
             self.encoder.train()
             self.emulator.train()
             total_loss = 0
@@ -135,6 +141,7 @@ class SMEModel:
                 total_loss += loss.item()
 
             avg_loss = total_loss / iterations
+            print("Average Loss:", avg_loss)
 
             if self.config.use_early_stopping and not pretraining_mode:
                 if avg_loss < best_loss:
@@ -154,17 +161,21 @@ class SMEModel:
         batch_size = self.config.batch_size
         t, n_vars = self.config.input_dim
         if self.config.use_active_learning:
-            phi_candidates = torch.rand((self.config.candidate_pool_size, self.config.param_dim), device=self.device) * 2 - 1
-            tau_candidates = torch.randint(10, t - 10, (self.config.candidate_pool_size,), device=self.device).float()
+            phi_candidates = torch.rand(
+                (self.config.candidate_pool_size, self.config.param_dim),
+                device=self.device
+            ) * 2 - 1
+            # For active learning we skip adding an extra tau candidate to ensure the tensor dimensions are consistent.
             with torch.no_grad():
-                tau_scaled = tau_candidates / t
-                phi_input = torch.cat([phi_candidates, tau_scaled.unsqueeze(1)], dim=1)
-                g_emb = self.emulator(phi_input)
+                g_emb = self.emulator(phi_candidates)
             uncertainty = -torch.var(g_emb, dim=1)
             selected_indices = torch.argsort(uncertainty)[:batch_size]
             selected_phi = phi_candidates[selected_indices]
         else:
-            selected_phi = torch.rand((batch_size, self.config.param_dim), device=self.device) * 2 - 1
+            selected_phi = torch.rand(
+                (batch_size, self.config.param_dim),
+                device=self.device
+            ) * 2 - 1
 
         y_batch = torch.rand(batch_size, t, n_vars, device=self.device)
         return selected_phi, y_batch
