@@ -44,7 +44,7 @@ class GeneralSimulator:
         }
 
     def _simulate_single_model(self) -> torch.Tensor:
-        model_type = (self.config.model_type[0].lower() if isinstance(self.config.model_type, list) 
+        model_type = (self.config.model_type[0].lower() if isinstance(self.config.model_type, list)
                       else self.config.model_type.lower())
         if model_type in CUSTOM_SIMULATORS:
             return CUSTOM_SIMULATORS[model_type](self.config).to(self.device)
@@ -156,8 +156,8 @@ class GeneralSimulator:
     def _simulate_regime_switching(self) -> torch.Tensor:
         n_regimes = self.config.params.get("n_regimes", 2)
         transition_matrix = torch.tensor(self.config.params.get("transition_matrix",
-                                                                   torch.ones((n_regimes, n_regimes)) / n_regimes),
-                                           device=self.device)
+                                                               torch.ones((n_regimes, n_regimes)) / n_regimes),
+                                         device=self.device)
         regime_params = self.config.params.get("regime_params", [{"mu": 0.0, "sigma": 1.0} for _ in range(n_regimes)])
         regimes = torch.zeros(self.config.T, dtype=torch.long, device=self.device)
         returns = torch.zeros(self.config.T, device=self.device)

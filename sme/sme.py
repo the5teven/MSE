@@ -105,6 +105,17 @@ class SME:
         self.training_loss_history = self.model.training_losses
         self.internal_logs.append("Training complete with {} epochs.".format(len(self.training_loss_history)))
 
+    def pretrain_model(self):
+        """
+        Pretrains the model using dynamically generated data.
+        Tracks pretraining losses and internal logs for advanced low-level inspection.
+        """
+        self.model = SMEModel(self.config)
+        self.model.pretrain()
+        # Capture pretraining history from the model for advanced users.
+        self.training_loss_history = self.model.pretraining_losses
+        self.internal_logs.append("Pretraining complete with {} epochs.".format(len(self.training_loss_history)))
+
     def simulate_data(self, model_type: str, params: Dict[str, Any], T: int, n_vars: int = 1, sigma: float = 1.0):
         if self.custom_simulation_function:
             simulated_series = self.custom_simulation_function(model_type, params, T, n_vars, sigma)
