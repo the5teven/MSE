@@ -36,7 +36,7 @@ class BaseEmulator(nn.Module, ABC):
 
 class SMEModel:
     def __init__(self, config: SMEConfig):
-        # Move logger initialization to the very start
+        # Initialize logger.
         self.logger = logging.getLogger(__name__)
         logging_level = getattr(logging, config.logging_config.logging_level.upper(), logging.INFO)
         logging.basicConfig(level=logging_level)
@@ -97,7 +97,6 @@ class SMEModel:
         Estimate parameters for observed data Y_star using ANN to retrieve a candidate
         and then refining via gradient-based optimization.
         """
-        # Set the underlying models to eval mode
         self.eval()
         Y_tensor = torch.tensor(Y_star, dtype=torch.float32, device=self.device).unsqueeze(0)
 
@@ -109,13 +108,12 @@ class SMEModel:
                 _, I = self.index.search(f_star.cpu().numpy(), 1)
                 phi_init = phi_pool[I[0][0]]
             else:
-                scores = torch.matmul(
-                    f_star,
-                    self.emulator(torch.tensor(phi_pool, dtype=torch.float32, device=self.device)).T
-                )
+                # Compute similarity scores in embedding space.
+                emulator_embeddings = self.emulator(torch.tensor(phi_pool, dtype=torch.float32, device=self.device))
+                scores = torch.matmul(f_star, emulator_embeddings.T)
                 phi_init = phi_pool[torch.argmax(scores).item()]
 
-        # Refine candidate using SGD
+        # Refine candidate using gradient based optimization.
         phi_opt = torch.tensor(phi_init, dtype=torch.float32, requires_grad=True, device=self.device)
         optimizer = torch.optim.Adam([phi_opt], lr=self.config.training_config.refinement_lr)
         for _ in range(self.config.training_config.refinement_steps):
@@ -127,6 +125,28 @@ class SMEModel:
 
         self.logger.info(f"Estimated parameters: {phi_opt.detach().cpu().numpy()}")
         return phi_opt.detach().cpu().numpy()
+
+    def compute_standard_errors(self, Y_star: np.ndarray, estimated_params: np.ndarray):
+        """
+        Compute standard errors using the Jacobian from the emulator.
+        1. Pass Y_star through encoder to get f_star.
+        2. Run emulator on estimated_params to get G_opt.
+        3. Compute the gradient (Jacobian) of the emulator output with respect to parameters.
+        4. Approximate the Fisher information matrix; invert to get parameter covariance and SE.
+        """
+        device = self.device
+        Y_tensor = torch.tensor(Y_star, dtype=torch.float32, device=device).unsqueeze(0)
+        f_star = self.encoder(Y_tensor)  # [1, embedding_dim]
+        phi_opt = torch.tensor(estimated_params, dtype=torch.float32, device=device, requires_grad=True)
+        G_opt = self.emulator(phi_opt.unsqueeze(0))  # [1, embedding_dim]
+        loss = 1 - torch.dot(f_star.squeeze(), G_opt.squeeze())
+        grad_phi = torch.autograd.grad(loss, phi_opt)[0]
+        fisher_information = torch.outer(grad_phi, grad_phi)
+        jitter = 1e-6
+        fisher_information += jitter * torch.eye(len(estimated_params), device=device)
+        fisher_inv = torch.inverse(fisher_information)
+        se = torch.sqrt(torch.diag(fisher_inv))
+        return se.cpu().numpy()
 
     def pretrain(self):
         """Perform pretraining with dynamically generated data."""
@@ -163,12 +183,12 @@ class SMEModel:
                     g_output = self.emulator(phi_batch)
                     loss = self.loss_fn(f=f_output, g=g_output)
 
-                    # Add moment matching regularization if configured.
+                    # Moment matching regularization if configured.
                     if self.config.regularization_config.moment_matching_weight > 0 and "economic_moments" in self.config.extra_params:
                         mY = self.config.extra_params["economic_moments"](Y_batch)
                         loss += self.config.regularization_config.moment_matching_weight * torch.norm(f_output - mY, p=2)
 
-                    # Include memory bank loss if active.
+                    # Memory bank loss if active.
                     if self.memory_bank_loss:
                         loss += self.memory_bank_loss(f_output, g_output)
 
@@ -190,7 +210,6 @@ class SMEModel:
             avg_loss = total_loss / iterations
             self.logger.info(f"Epoch {epoch} average loss: {avg_loss:.4f}")
 
-            # Early stopping logic if enabled.
             if self.config.training_config.use_early_stopping and not pretraining_mode:
                 if avg_loss < best_loss:
                     best_loss = avg_loss
@@ -207,7 +226,8 @@ class SMEModel:
 
     def _generate_training_batch(self, pretraining_mode=False):
         """
-        Generate a training batch. If active learning is enabled, select candidates based on uncertainty.
+        Generate a training batch.
+        If active learning is enabled, select candidates based on an uncertainty metric.
         Otherwise, generate random batches.
         """
         batch_size = self.config.training_config.batch_size
@@ -228,6 +248,16 @@ class SMEModel:
 
         Y_batch = torch.rand(batch_size, t, n_vars, device=self.device)
         return selected_phi, Y_batch
+
+    def generate_candidate_pool(self, candidate_size: int):
+        """
+        Generate a candidate pool for parameter estimation using an active-learning strategy.
+        This method creates candidate parameter vectors uniformly in the parameter space.
+        """
+        n_params = self.config.training_config.param_dim
+        # Generate uniform candidates in [-1, 1] for all parameters.
+        candidate_pool = np.random.uniform(-1, 1, size=(candidate_size, n_params)).astype(np.float32)
+        return candidate_pool
 
     def _create_optimizer(self):
         params = list(self.encoder.parameters()) + list(self.emulator.parameters())
