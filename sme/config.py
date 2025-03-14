@@ -8,6 +8,14 @@ class SMEConfig:
     loss_type: str = 'symmetric'
     input_dim: Tuple[int, int] = (100, 2)
 
+    use_active_learning: bool = False
+    candidate_pool_size: int = 500
+    training_steps_per_epoch: int = 100
+    pretraining_samples: int = 1000
+    pretraining_model: str = "VAR"
+    refinement_steps: int = 10
+    refinement_lr: float = 0.001
+
     # Training Hyperparameters
     batch_size: int = 64
     num_epochs: int = 100
@@ -37,7 +45,7 @@ class SMEConfig:
 
     # FAISS Nearest Neighbor Search
     nn_method: str = 'faiss'
-    faiss_index_type: str = 'FlatIP'  # FAISS index type for nearest neighbor search
+    faiss_index_type: str = 'FlatIP'
 
     # Breakpoint Estimation
     use_breakpoint_estimation: bool = False
@@ -52,8 +60,6 @@ class SMEConfig:
 
     # Refinement
     use_refinement: bool = False
-    refinement_steps: int = 10
-    refinement_lr: float = 0.001
 
     # Memory Bank Updates
     use_memory_bank_updates: bool = False
